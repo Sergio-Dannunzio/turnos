@@ -81,7 +81,6 @@ export default function BloqueosPage() {
     }
 
     setSelectedHoras([]);
-    setDiaEntero(false);
     await cargar();
     setLoading(false);
   }
