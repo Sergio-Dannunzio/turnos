@@ -57,7 +57,6 @@ export default function BloqueosPage() {
       setSelectedDate(null);
       setHorariosDelDia([]);
       setSelectedHoras([]);
-      setDiaEntero(false);
       return;
     }
     setSelectedDate(dateStr);
