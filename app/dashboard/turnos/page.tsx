@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createSupabaseBrowser } from '@/lib/supabase-browser';
-import { ChevronLeft, ChevronRight, Check, Plus, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Check, Plus, X, CalendarDays, Ban } from 'lucide-react';
 
 const DIAS_ES = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
 
@@ -37,6 +37,11 @@ export default function TurnosPage() {
   const [formSlot, setFormSlot] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>({ nombre: '', telefono: '' });
   const [saving, setSaving] = useState(false);
+  const [soloDisponibles, setSoloDisponibles] = useState(true);
+  const [bloqueoTotal, setBloqueoTotal] = useState(false);
+  const [horasBloqueadas, setHorasBloqueadas] = useState<string[]>([]);
+  const [esDiaEspecial, setEsDiaEspecial] = useState(false);
+  const dateInputRef = useRef<HTMLInputElement>(null);
   const supabase = createSupabaseBrowser();
 
   useEffect(() => {
@@ -57,20 +62,37 @@ export default function TurnosPage() {
     setLoading(true);
     const diaSemana = DIAS_ES[new Date(f + 'T12:00:00').getDay()];
 
-    const [{ data: horarios }, { data: reservas }] = await Promise.all([
+    const [{ data: horarios }, { data: reservas }, { data: bloqueos }] = await Promise.all([
       supabase.from('horarios').select('hora').eq('negocio_id', nId).eq('dia_semana', diaSemana).eq('activo', true).order('hora'),
       supabase.from('reservas').select('id, hora, cliente_nombre, cliente_telefono, completado').eq('negocio_id', nId).eq('fecha', f),
+      supabase.from('bloqueos').select('hora').eq('negocio_id', nId).eq('fecha', f),
     ]);
+
+    setBloqueoTotal(bloqueos?.some(b => b.hora === null) ?? false);
+    setHorasBloqueadas(bloqueos?.filter(b => b.hora).map(b => b.hora!.slice(0, 5)) ?? []);
 
     const reservaMap = new Map(reservas?.map(r => [r.hora.slice(0, 5), r]) ?? []);
 
-    const slotsList: Slot[] = (horarios ?? []).map(h => {
-      const hora = h.hora.slice(0, 5);
+    let horasBase = horarios?.map(h => h.hora.slice(0, 5)) ?? [];
+    let especial = false;
+
+    if (horasBase.length === 0) {
+      const { data: especiales } = await supabase
+        .from('dias_especiales').select('hora')
+        .eq('negocio_id', nId).eq('fecha', f).order('hora');
+      if (especiales && especiales.length > 0) {
+        horasBase = especiales.map(e => e.hora.slice(0, 5));
+        especial = true;
+      }
+    }
+
+    const slotsList: Slot[] = horasBase.map(hora => {
       const reserva = reservaMap.get(hora);
       return { hora, reserva: reserva ? { id: reserva.id, cliente_nombre: reserva.cliente_nombre, cliente_telefono: reserva.cliente_telefono, completado: reserva.completado } : undefined };
     });
 
     setSlots(slotsList);
+    setEsDiaEspecial(especial);
     setLoading(false);
   }
 
@@ -104,24 +126,76 @@ export default function TurnosPage() {
   const ocupados = slots.filter(s => s.reserva).length;
   const completados = slots.filter(s => s.reserva?.completado).length;
 
+  const ahora = new Date().toTimeString().slice(0, 5);
+  const esHoy = fecha === new Date().toISOString().split('T')[0];
+
+  // Slot actual: el último que ya arrancó (para incluirlo aunque hayan pasado unos minutos)
+  const slotActual = slots.map(s => s.hora).filter(h => h <= ahora).at(-1);
+
+  const slotsFiltrados = soloDisponibles
+    ? slots.filter(s => {
+        if (s.reserva) return false;
+        if (!esHoy) return true;
+        return slotActual ? s.hora >= slotActual : s.hora >= ahora;
+      })
+    : slots;
+
   return (
     <div className="flex flex-col gap-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-white">Turnos</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-white">Turnos</h1>
+            {esDiaEspecial && !loading && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                Día especial
+              </span>
+            )}
+          </div>
           <p className="text-sm text-zinc-500 capitalize">{formatFecha(fecha)}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setFecha(f => addDays(f, -1))} className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors">
-            <ChevronLeft size={18} />
-          </button>
-          <button onClick={() => setFecha(new Date().toISOString().split('T')[0])} className="px-3 py-1.5 text-xs rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors">
-            Hoy
-          </button>
-          <button onClick={() => setFecha(f => addDays(f, 1))} className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors">
-            <ChevronRight size={18} />
-          </button>
+        <div className="flex items-center gap-3">
+          {/* Toggle disponibles/todos */}
+          {!loading && slots.length > 0 && (
+            <button
+              onClick={() => setSoloDisponibles(v => !v)}
+              className={`text-xs px-2.5 py-2 rounded-lg transition-colors ${
+                soloDisponibles
+                  ? 'bg-zinc-700 text-white'
+                  : 'text-zinc-500 hover:text-white hover:bg-zinc-800'
+              }`}
+            >
+              {soloDisponibles ? 'Disponibles' : 'Todos'}
+            </button>
+          )}
+
+          {/* Navegación de fecha */}
+          <div className="flex items-center gap-1">
+            <button onClick={() => setFecha(f => addDays(f, -1))} className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors">
+              <ChevronLeft size={18} />
+            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => dateInputRef.current?.showPicker()}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 text-xs font-medium transition-colors capitalize whitespace-nowrap"
+              >
+                <CalendarDays size={13} className="text-zinc-500" />
+                {new Date(fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' })}
+              </button>
+              <input
+                ref={dateInputRef}
+                type="date"
+                value={fecha}
+                onChange={e => e.target.value && setFecha(e.target.value)}
+                style={{ position: 'absolute', top: '100%', left: 0, width: 1, height: 1, opacity: 0.01 }}
+              />
+            </div>
+            <button onClick={() => setFecha(f => addDays(f, 1))} className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors">
+              <ChevronRight size={18} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -139,6 +213,14 @@ export default function TurnosPage() {
         ))}
       </div>
 
+      {/* Banner día bloqueado */}
+      {!loading && bloqueoTotal && (
+        <div className="flex items-center gap-3 bg-orange-500/10 border border-orange-500/20 rounded-xl px-4 py-3">
+          <Ban size={15} className="text-orange-400 shrink-0" />
+          <p className="text-sm text-orange-400">Este día está marcado como bloqueado.</p>
+        </div>
+      )}
+
       {/* Slots */}
       {loading ? (
         <div className="flex flex-col gap-2">
@@ -146,15 +228,24 @@ export default function TurnosPage() {
             <div key={i} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 h-16 animate-pulse" />
           ))}
         </div>
-      ) : slots.length === 0 ? (
-        <p className="text-sm text-zinc-600 text-center py-12">No hay horarios configurados para este día.</p>
+      ) : slotsFiltrados.length === 0 ? (
+        <p className="text-sm text-zinc-600 text-center py-12">
+          {slots.length === 0
+            ? 'No hay horarios configurados para este día.'
+            : 'No hay turnos disponibles para este día.'}
+        </p>
       ) : (
         <div className="flex flex-col gap-2">
-          {slots.map(slot => (
+          {slotsFiltrados.map(slot => (
             <div key={slot.hora}>
               {/* Slot card */}
+              {(() => {
+                const bloqueado = horasBloqueadas.includes(slot.hora);
+                return (
               <div className={`bg-zinc-900 border rounded-xl p-4 transition-colors ${
-                slot.reserva?.completado
+                bloqueado
+                  ? 'border-orange-500/20'
+                  : slot.reserva?.completado
                   ? 'border-green-500/20'
                   : slot.reserva
                   ? 'border-zinc-700'
@@ -163,16 +254,21 @@ export default function TurnosPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <span className="text-sm font-semibold text-zinc-300 w-12">{slot.hora}</span>
-                    {slot.reserva ? (
+                    {bloqueado && (
+                      <span className="flex items-center gap-1 text-xs text-orange-400">
+                        <Ban size={11} /> Bloqueado
+                      </span>
+                    )}
+                    {!bloqueado && slot.reserva ? (
                       <div>
                         <p className={`text-sm font-medium ${slot.reserva.completado ? 'text-zinc-500 line-through' : 'text-white'}`}>
                           {slot.reserva.cliente_nombre}
                         </p>
                         <p className="text-xs text-zinc-600">{slot.reserva.cliente_telefono}</p>
                       </div>
-                    ) : (
+                    ) : !bloqueado ? (
                       <span className="text-sm text-zinc-600">Disponible</span>
-                    )}
+                    ) : null}
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -208,6 +304,8 @@ export default function TurnosPage() {
                   </div>
                 </div>
               </div>
+                );
+              })()}
 
               {/* Inline form */}
               {formSlot === slot.hora && (

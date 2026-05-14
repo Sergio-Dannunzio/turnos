@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Ban, Users, Settings, LogOut, LayoutDashboard, CalendarCheck } from 'lucide-react';
+import { Ban, Users, Settings, LogOut, LayoutDashboard, CalendarCheck, Clock } from 'lucide-react';
 import { createSupabaseBrowser } from '@/lib/supabase-browser';
 
 const links = [
@@ -10,6 +10,7 @@ const links = [
   { href: '/dashboard/turnos', label: 'Turnos', icon: CalendarCheck },
   { href: '/dashboard/bloqueos', label: 'Bloqueos', icon: Ban },
   { href: '/dashboard/clientes', label: 'Clientes', icon: Users },
+  { href: '/dashboard/horarios', label: 'Horarios', icon: Clock },
   { href: '/dashboard/configuracion', label: 'Configuración', icon: Settings },
 ];
 

@@ -1,7 +1,6 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
 import { Plus, X } from 'lucide-react';
 
 const DIAS = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
@@ -33,33 +32,82 @@ function fromMinutes(min: number) {
   return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 }
 
-export default function SetupPage() {
-  const [dias, setDias] = useState<string[]>(['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']);
+function detectarConfig(horarios: { dia_semana: string; hora: string }[]) {
+  if (horarios.length === 0) return null;
+
+  const diasPresentes = new Set(horarios.map(h => h.dia_semana));
+  const dias = DIAS.filter(d => diasPresentes.has(d));
+
+  const primerDia = dias[0];
+  const slotsDia = horarios
+    .filter(h => h.dia_semana === primerDia)
+    .map(h => toMinutes(h.hora))
+    .sort((a, b) => a - b);
+
+  if (slotsDia.length === 0) return null;
+
+  const intervalo = slotsDia.length > 1 ? slotsDia[1] - slotsDia[0] : 60;
+
+  // Detectar lapsos buscando huecos mayores al intervalo
+  const lapsos: Lapso[] = [];
+  let inicio = slotsDia[0];
+  for (let i = 1; i < slotsDia.length; i++) {
+    if (slotsDia[i] - slotsDia[i - 1] > intervalo) {
+      lapsos.push({ desde: fromMinutes(inicio), hasta: fromMinutes(slotsDia[i - 1] + intervalo) });
+      inicio = slotsDia[i];
+    }
+  }
+  lapsos.push({ desde: fromMinutes(inicio), hasta: fromMinutes(slotsDia[slotsDia.length - 1] + intervalo) });
+
+  return { dias, lapsos, intervalo };
+}
+
+export default function HorariosPage() {
+  const [dias, setDias] = useState<string[]>(['lunes', 'martes', 'miercoles', 'jueves', 'viernes']);
   const [lapsos, setLapsos] = useState<Lapso[]>([{ desde: '09:00', hasta: '18:00' }]);
   const [intervalo, setIntervalo] = useState(60);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const router = useRouter();
+  const [exito, setExito] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/dashboard/horarios')
+      .then(r => r.json())
+      .then(data => {
+        const config = detectarConfig(data.horarios ?? []);
+        if (config) {
+          setDias(config.dias);
+          setLapsos(config.lapsos);
+          setIntervalo(config.intervalo);
+        }
+      })
+      .finally(() => setLoading(false));
+  }, []);
 
   function toggleDia(dia: string) {
+    setExito(false);
     setDias(prev => prev.includes(dia) ? prev.filter(d => d !== dia) : [...prev, dia]);
   }
 
   function agregarLapso() {
+    setExito(false);
     const ultimo = lapsos[lapsos.length - 1];
     const nuevoDesde = ultimo ? ultimo.hasta : '09:00';
     setLapsos(prev => [...prev, { desde: nuevoDesde, hasta: nuevoDesde }]);
   }
 
   function quitarLapso(idx: number) {
+    setExito(false);
     setLapsos(prev => prev.filter((_, i) => i !== idx));
   }
 
   function actualizarLapso(idx: number, campo: keyof Lapso, valor: string) {
+    setExito(false);
     setLapsos(prev => prev.map((l, i) => i === idx ? { ...l, [campo]: valor } : l));
   }
 
-  function generarHorarios() {
+  function generarPreview() {
     const slots: { dia_semana: string; hora: string }[] = [];
     for (const dia of dias) {
       for (const lapso of lapsos) {
@@ -73,37 +121,50 @@ export default function SetupPage() {
     return slots;
   }
 
-  const preview = generarHorarios();
+  const preview = generarPreview();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setExito(false);
     if (dias.length === 0) { setError('Seleccioná al menos un día.'); return; }
     if (preview.length === 0) { setError('Los lapsos definidos no generaron turnos válidos.'); return; }
 
-    setLoading(true);
+    setSaving(true);
     setError('');
 
-    const res = await fetch('/api/dashboard/setup', {
-      method: 'POST',
+    const res = await fetch('/api/dashboard/horarios', {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ horarios: preview }),
     });
 
+    setSaving(false);
+
     if (!res.ok) {
       const data = await res.json();
-      setError(data.error || 'Error al guardar la configuración.');
-      setLoading(false);
+      setError(data.error || 'Error al guardar los horarios.');
       return;
     }
 
-    router.refresh();
-    router.push('/dashboard');
+    setExito(true);
+  }
+
+  if (loading) {
+    return (
+      <div className="max-w-lg mx-auto flex flex-col gap-4">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 h-28 animate-pulse" />
+        ))}
+      </div>
+    );
   }
 
   return (
     <div className="max-w-lg mx-auto">
-      <h1 className="text-2xl font-bold text-white mb-1">Configuración inicial</h1>
-      <p className="text-sm text-zinc-500 mb-6">Definí tu horario de atención. Podés modificarlo después.</p>
+      <h1 className="text-2xl font-bold text-white mb-1">Horarios de atención</h1>
+      <p className="text-sm text-zinc-500 mb-6">
+        Modificá los días y horarios en los que recibís turnos. Los cambios reemplazan la configuración anterior.
+      </p>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
 
@@ -183,7 +244,7 @@ export default function SetupPage() {
               <button
                 key={op.value}
                 type="button"
-                onClick={() => setIntervalo(op.value)}
+                onClick={() => { setExito(false); setIntervalo(op.value); }}
                 className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                   intervalo === op.value
                     ? 'bg-white text-zinc-900 font-medium'
@@ -197,17 +258,23 @@ export default function SetupPage() {
         </div>
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-sm text-zinc-400">
-          Se van a crear <span className="text-white font-semibold">{preview.length} turnos</span> por semana.
+          Se van a generar{' '}
+          <span className="text-white font-semibold">{preview.length} turnos</span> por semana.
+        </div>
+
+        <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-4 text-sm text-zinc-500">
+          Las reservas ya registradas <span className="text-zinc-300">no se modifican</span> al cambiar los horarios.
         </div>
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
+        {exito && <p className="text-green-400 text-sm">Horarios actualizados correctamente.</p>}
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={saving}
           className="bg-white text-zinc-900 rounded-lg py-2.5 font-semibold hover:bg-zinc-200 disabled:opacity-50 transition-colors"
         >
-          {loading ? 'Guardando...' : 'Guardar y continuar'}
+          {saving ? 'Guardando...' : 'Guardar cambios'}
         </button>
       </form>
     </div>
