@@ -320,35 +320,39 @@ export default function TurnosPage() {
 
               {/* Inline form */}
               {formSlot === slot.hora && (
-                <div className="bg-zinc-900 border border-zinc-700 border-t-0 rounded-b-xl px-4 pb-4 pt-3 flex gap-2 items-end">
-                  <div className="flex-1">
-                    <label className="block text-xs text-zinc-500 mb-1">Nombre <span className="text-zinc-700">(opcional)</span></label>
-                    <input
-                      autoFocus
-                      value={form.nombre}
-                      onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))}
-                      placeholder="Sin nombre"
-                      className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-500 placeholder-zinc-600"
-                    />
+                <div className="bg-zinc-900 border border-zinc-700 border-t-0 rounded-b-xl px-4 pb-4 pt-3 flex flex-col gap-2">
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <label className="block text-xs text-zinc-500 mb-1">Nombre <span className="text-zinc-700">(opcional)</span></label>
+                      <input
+                        autoFocus
+                        value={form.nombre}
+                        onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))}
+                        placeholder="Sin nombre"
+                        className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-500 placeholder-zinc-600"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-xs text-zinc-500 mb-1">Teléfono <span className="text-zinc-700">(opcional)</span></label>
+                      <input
+                        value={form.telefono}
+                        onChange={e => setForm(f => ({ ...f, telefono: e.target.value }))}
+                        className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                      />
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <label className="block text-xs text-zinc-500 mb-1">Teléfono <span className="text-zinc-700">(opcional)</span></label>
-                    <input
-                      value={form.telefono}
-                      onChange={e => setForm(f => ({ ...f, telefono: e.target.value }))}
-                      className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-500"
-                    />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => registrarManual(slot.hora)}
+                      disabled={saving}
+                      className="flex-1 bg-white text-zinc-900 rounded-lg px-4 py-1.5 text-sm font-semibold hover:bg-zinc-200 disabled:opacity-50 transition-colors"
+                    >
+                      {saving ? '...' : 'Guardar'}
+                    </button>
+                    <button onClick={() => setFormSlot(null)} className="p-1.5 text-zinc-600 hover:text-zinc-300">
+                      <X size={16} />
+                    </button>
                   </div>
-                  <button
-                    onClick={() => registrarManual(slot.hora)}
-                    disabled={saving}
-                    className="bg-white text-zinc-900 rounded-lg px-4 py-1.5 text-sm font-semibold hover:bg-zinc-200 disabled:opacity-50 transition-colors"
-                  >
-                    {saving ? '...' : 'Guardar'}
-                  </button>
-                  <button onClick={() => setFormSlot(null)} className="p-1.5 text-zinc-600 hover:text-zinc-300">
-                    <X size={16} />
-                  </button>
                 </div>
               )}
             </div>
