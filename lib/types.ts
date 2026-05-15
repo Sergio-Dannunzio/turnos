@@ -12,6 +12,7 @@ export interface Reserva {
   cliente_nombre: string;
   cliente_telefono: string;
   completado: boolean;
+  origen: 'bot' | 'manual';
   creado_en: string;
 }
 
