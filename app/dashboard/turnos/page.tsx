@@ -100,7 +100,7 @@ export default function TurnosPage() {
 
     const slotsList: Slot[] = horasBase.map(hora => {
       const reserva = reservaMap.get(hora);
-      return { hora, reserva: reserva ? { id: reserva.id, cliente_nombre: reserva.cliente_nombre, cliente_telefono: reserva.cliente_telefono, completado: reserva.completado } : undefined };
+      return { hora, reserva: reserva ? { id: reserva.id, cliente_nombre: reserva.cliente_nombre, cliente_telefono: reserva.cliente_telefono, completado: reserva.completado, origen: (reserva.origen ?? 'manual') as 'bot' | 'manual' } : undefined };
     });
 
     setSlots(slotsList);
