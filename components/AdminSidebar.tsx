@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Building2, LogOut } from 'lucide-react';
+import { Building2, LogOut, Zap } from 'lucide-react';
 import { createSupabaseBrowser } from '@/lib/supabase-browser';
 
 const links = [
-  { href: '/admin', label: 'Negocios', icon: Building2 },
+  { href: '/admin', label: 'Negocios', icon: Building2, exact: true },
+  { href: '/admin/planes', label: 'Planes', icon: Zap },
 ];
 
 export default function AdminSidebar() {
@@ -26,8 +27,8 @@ export default function AdminSidebar() {
       </div>
 
       <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5">
-        {links.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href || pathname.startsWith(href + '/');
+        {links.map(({ href, label, icon: Icon, exact }) => {
+          const active = exact ? pathname === href : pathname.startsWith(href);
           return (
             <Link
               key={href}

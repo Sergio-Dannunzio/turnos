@@ -58,6 +58,17 @@ export default function TurnosPage() {
     if (negocioId) cargar(negocioId, fecha);
   }, [fecha]);
 
+  useEffect(() => {
+    if (!negocioId) return;
+    const channel = supabase
+      .channel('reservas-turnos')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservas', filter: `negocio_id=eq.${negocioId}` }, () => {
+        cargar(negocioId, fecha);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [negocioId, fecha]);
+
   async function cargar(nId: number, f: string) {
     setLoading(true);
     const diaSemana = DIAS_ES[new Date(f + 'T12:00:00').getDay()];

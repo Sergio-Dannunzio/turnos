@@ -98,6 +98,7 @@ function getChartConfig(reservas: any[], periodo: Periodo, today: string) {
 }
 
 export default function AgendaPage() {
+  const [negocioId, setNegocioId] = useState<number | null>(null);
   const [reservas, setReservas] = useState<any[]>([]);
   const [totalSlotsHoy, setTotalSlotsHoy] = useState(0);
   const [mostrarTodos, setMostrarTodos] = useState(false);
@@ -107,35 +108,50 @@ export default function AgendaPage() {
 
   const today = new Date().toISOString().split('T')[0];
 
+  async function cargar(nId: number) {
+    const startOfYear = `${today.slice(0, 4)}-01-01`;
+    const endOfYear = `${today.slice(0, 4)}-12-31`;
+    const diaSemana = DIAS_ES[new Date().getDay()];
+
+    const [{ data: res }, { data: horarios }] = await Promise.all([
+      supabase.from('reservas').select('*')
+        .eq('negocio_id', nId)
+        .gte('fecha', startOfYear)
+        .lte('fecha', endOfYear)
+        .order('fecha').order('hora'),
+      supabase.from('horarios').select('hora')
+        .eq('negocio_id', nId)
+        .eq('dia_semana', diaSemana)
+        .eq('activo', true),
+    ]);
+
+    setReservas(res ?? []);
+    setTotalSlotsHoy(horarios?.length ?? 0);
+    setLoading(false);
+  }
+
   useEffect(() => {
-    async function cargar() {
+    async function init() {
       const { data: { user } } = await supabase.auth.getUser();
       const { data: profile } = await supabase
         .from('profiles').select('negocio_id').eq('id', user!.id).single();
       const nId = profile!.negocio_id;
-
-      const startOfYear = `${today.slice(0, 4)}-01-01`;
-      const endOfYear = `${today.slice(0, 4)}-12-31`;
-      const diaSemana = DIAS_ES[new Date().getDay()];
-
-      const [{ data: res }, { data: horarios }] = await Promise.all([
-        supabase.from('reservas').select('*')
-          .eq('negocio_id', nId)
-          .gte('fecha', startOfYear)
-          .lte('fecha', endOfYear)
-          .order('fecha').order('hora'),
-        supabase.from('horarios').select('hora')
-          .eq('negocio_id', nId)
-          .eq('dia_semana', diaSemana)
-          .eq('activo', true),
-      ]);
-
-      setReservas(res ?? []);
-      setTotalSlotsHoy(horarios?.length ?? 0);
-      setLoading(false);
+      setNegocioId(nId);
+      await cargar(nId);
     }
-    cargar();
+    init();
   }, []);
+
+  useEffect(() => {
+    if (!negocioId) return;
+    const channel = supabase
+      .channel('reservas-agenda')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservas', filter: `negocio_id=eq.${negocioId}` }, () => {
+        cargar(negocioId);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [negocioId]);
 
   const reservasHoy = reservas.filter(r => r.fecha === today);
   const completadosHoy = reservasHoy.filter(r => r.completado).length;
