@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServer, createSupabaseAdmin } from '@/lib/supabase-server';
 
-// Precios en ARS — ajustar según tipo de cambio del momento
 const PRECIOS: Record<string, { monto: number; titulo: string }> = {
-  basico: { monto: Number(process.env.MP_PRECIO_BASICO ?? 35000), titulo: 'Plan Básico — BotTurnos' },
-  pro:    { monto: Number(process.env.MP_PRECIO_PRO ?? 50000),    titulo: 'Plan Pro — BotTurnos' },
+  basico: { monto: Number(process.env.MP_PRECIO_BASICO ?? 35000), titulo: 'Plan Básico — Turnixia' },
+  pro:    { monto: Number(process.env.MP_PRECIO_PRO ?? 50000),    titulo: 'Plan Pro — Turnixia' },
 };
 
 const DESCUENTO_PRIMER_MES = 0.25;
@@ -24,26 +23,31 @@ export async function POST(req: NextRequest) {
   const { data: negocio } = await admin.from('negocios').select('plan').eq('id', negocioId).single();
   const esTrial = negocio?.plan === 'trial';
   const monto = esTrial
-    ? Math.round(PRECIOS[planId].monto * (1 - DESCUENTO_PRIMER_MES) * 100) / 100
+    ? Math.round(PRECIOS[planId].monto * (1 - DESCUENTO_PRIMER_MES))
     : PRECIOS[planId].monto;
 
+  const isSandbox = process.env.MP_ACCESS_TOKEN?.startsWith('TEST-');
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+
   const body = {
-    reason: PRECIOS[planId].titulo,
-    external_reference: `negocio_${negocioId}_${planId}`,
-    payer_email: user.email,
-    auto_recurring: {
-      frequency: 1,
-      frequency_type: 'months',
-      transaction_amount: monto,
+    items: [{
+      title: PRECIOS[planId].titulo,
+      quantity: 1,
+      unit_price: monto,
       currency_id: 'ARS',
+    }],
+    external_reference: `negocio_${negocioId}_${planId}`,
+    payer: { email: user.email },
+    back_urls: {
+      success: `${appUrl}/dashboard/plan?pago=ok`,
+      failure: `${appUrl}/dashboard/plan?pago=error`,
+      pending: `${appUrl}/dashboard/plan?pago=pendiente`,
     },
-    back_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/plan`,
-    status: 'pending',
+    auto_return: 'approved',
+    notification_url: `${appUrl}/api/suscripcion/webhook`,
   };
 
-  console.log('MP_ACCESS_TOKEN prefix:', process.env.MP_ACCESS_TOKEN?.slice(0, 10));
-
-  const mpRes = await fetch('https://api.mercadopago.com/preapproval', {
+  const mpRes = await fetch('https://api.mercadopago.com/checkout/preferences', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`,
@@ -53,15 +57,16 @@ export async function POST(req: NextRequest) {
   });
 
   const mp = await mpRes.json();
-  if (!mp.init_point) {
+  const initPoint = isSandbox ? mp.sandbox_init_point : mp.init_point;
+
+  if (!initPoint) {
     console.error('MP error:', mp);
-    return NextResponse.json({ error: 'Error al crear suscripción en MP' }, { status: 500 });
+    return NextResponse.json({ error: 'Error al crear preferencia de pago en MP' }, { status: 500 });
   }
 
   await admin.from('negocios').update({
-    mp_suscripcion_id: mp.id,
     mp_suscripcion_estado: 'pendiente',
   }).eq('id', negocioId);
 
-  return NextResponse.json({ init_point: mp.init_point });
+  return NextResponse.json({ init_point: initPoint });
 }

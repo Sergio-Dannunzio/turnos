@@ -106,9 +106,10 @@ export default function PlanPage() {
     }
     cargar();
 
-    if (searchParams.get('suscripcion') === 'ok') {
-      setMensaje({ tipo: 'ok', texto: '¡Suscripción iniciada! Se activará en unos minutos una vez confirmado el pago.' });
-    }
+    const pago = searchParams.get('pago');
+    if (pago === 'ok') setMensaje({ tipo: 'ok', texto: '¡Pago recibido! Tu plan se activará en unos minutos.' });
+    if (pago === 'error') setMensaje({ tipo: 'error', texto: 'El pago no pudo procesarse. Intentá de nuevo.' });
+    if (pago === 'pendiente') setMensaje({ tipo: 'ok', texto: 'Pago pendiente de acreditación. Te avisaremos cuando se confirme.' });
   }, []);
 
   async function suscribirse(planId: string) {
@@ -134,7 +135,7 @@ export default function PlanPage() {
   }
 
   async function cancelar() {
-    if (!confirm('¿Seguro que querés cancelar tu suscripción? El plan seguirá activo hasta la fecha de vencimiento.')) return;
+    if (!confirm('¿Seguro que no querés renovar? Tu plan seguirá activo hasta la fecha de vencimiento y no se cobrará nada más.')) return;
     setCancelando(true);
     setMensaje(null);
     try {
@@ -157,7 +158,7 @@ export default function PlanPage() {
   const mpEstado = (negocio as any)?.mp_suscripcion_estado ?? 'ninguna';
   const dias = negocio ? diasRestantes(negocio.plan_vence) : 0;
   const planActivo = PLANES.find(p => p.id === plan)!;
-  const suscripcionActiva = mpEstado === 'autorizada';;
+  const suscripcionActiva = mpEstado === 'activa';
 
   return (
     <div className="flex flex-col gap-8 max-w-4xl">
@@ -316,7 +317,7 @@ export default function PlanPage() {
                     className="w-full py-2 rounded-lg text-sm font-medium bg-zinc-800 text-zinc-400 hover:text-red-400 hover:bg-zinc-700 transition-colors flex items-center justify-center gap-2"
                   >
                     {cancelando && <Loader2 size={13} className="animate-spin" />}
-                    Cancelar suscripción
+                    No renovar
                   </button>
                 ) : activo ? (
                   <button disabled className="w-full py-2 rounded-lg text-sm font-medium bg-zinc-800 text-zinc-500 cursor-default">
@@ -347,7 +348,7 @@ export default function PlanPage() {
       </div>
 
       <p className="text-xs text-zinc-600">
-        Para cambiar de plan o cancelar tu suscripción escribinos a <span className="text-zinc-500">soporte@boturnos.com</span>
+        Para cambiar de plan o consultas escribinos a <span className="text-zinc-500">soporte@turnixia.com</span>
       </p>
     </div>
   );
