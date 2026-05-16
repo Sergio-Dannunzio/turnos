@@ -37,14 +37,14 @@ export async function POST(req: NextRequest) {
       currency_id: 'ARS',
     }],
     external_reference: `negocio_${negocioId}_${planId}`,
-    payer: { email: user.email },
+    payer: { email: isSandbox ? 'test_user_123456789@testuser.com' : user.email },
     back_urls: {
       success: `${appUrl}/dashboard/plan?pago=ok`,
       failure: `${appUrl}/dashboard/plan?pago=error`,
       pending: `${appUrl}/dashboard/plan?pago=pendiente`,
     },
     auto_return: 'approved',
-    notification_url: `${appUrl}/api/suscripcion/webhook`,
+    ...(isSandbox ? {} : { notification_url: `${appUrl}/api/suscripcion/webhook` }),
   };
 
   const mpRes = await fetch('https://api.mercadopago.com/checkout/preferences', {
