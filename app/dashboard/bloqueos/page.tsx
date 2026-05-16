@@ -5,6 +5,8 @@ import { createSupabaseBrowser } from '@/lib/supabase-browser';
 import { ChevronLeft, ChevronRight, Plus, X, Star } from 'lucide-react';
 import type { Bloqueo } from '@/lib/types';
 
+type Empleado = { id: number; nombre: string };
+
 const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const DIAS_ES = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -101,8 +103,26 @@ function detectarConfigEspecial(horas: string[]) {
   return { lapsos, intervalo };
 }
 
+// Agrupa bloqueos por empleado para el display
+function agruparPorEmpleado(bloqueos: Bloqueo[], empleados: Empleado[]) {
+  const map = new Map<string, { nombre: string; bloqueos: Bloqueo[] }>();
+  for (const b of bloqueos) {
+    const key = b.empleado_id?.toString() ?? 'todos';
+    if (!map.has(key)) {
+      const nombre = b.empleado_id
+        ? (empleados.find(e => e.id === b.empleado_id)?.nombre ?? 'Empleado')
+        : 'Todos';
+      map.set(key, { nombre, bloqueos: [] });
+    }
+    map.get(key)!.bloqueos.push(b);
+  }
+  return map;
+}
+
 export default function BloqueosPage() {
   const [bloqueos, setBloqueos] = useState<Bloqueo[]>([]);
+  const [empleados, setEmpleados] = useState<Empleado[]>([]);
+  const [empleadoBloqueo, setEmpleadoBloqueo] = useState<number | null>(null);
   const [negocioId, setNegocioId] = useState<number | null>(null);
   const [viewDate, setViewDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -112,7 +132,6 @@ export default function BloqueosPage() {
   const [diasLaborables, setDiasLaborables] = useState<Set<string>>(new Set());
   const [diasConEspecial, setDiasConEspecial] = useState<Set<string>>(new Set());
 
-  // Estado día especial
   const [slotsEspeciales, setSlotsEspeciales] = useState<string[]>([]);
   const [lapsosEspeciales, setLapsosEspeciales] = useState<Lapso[]>([{ desde: '09:00', hasta: '13:00' }]);
   const [intervaloEspecial, setIntervaloEspecial] = useState(60);
@@ -128,15 +147,17 @@ export default function BloqueosPage() {
       const nId = profile!.negocio_id;
       setNegocioId(nId);
 
-      const [{ data: blqs }, { data: horarios }, { data: especiales }] = await Promise.all([
+      const [{ data: blqs }, { data: horarios }, { data: especiales }, { data: emps }] = await Promise.all([
         supabase.from('bloqueos').select('*').eq('negocio_id', nId).order('fecha'),
         supabase.from('horarios').select('dia_semana').eq('negocio_id', nId).eq('activo', true),
         supabase.from('dias_especiales').select('fecha').eq('negocio_id', nId),
+        supabase.from('empleados').select('id, nombre').eq('negocio_id', nId).eq('activo', true).order('id'),
       ]);
 
       setBloqueos(blqs ?? []);
       setDiasLaborables(new Set(horarios?.map(h => h.dia_semana) ?? []));
       setDiasConEspecial(new Set(especiales?.map(e => e.fecha) ?? []));
+      setEmpleados(emps ?? []);
     }
     init();
   }, []);
@@ -180,15 +201,11 @@ export default function BloqueosPage() {
     const diaSemana = DIAS_ES[new Date(dateStr + 'T12:00:00').getDay()];
     const esLaborable = diasLaborables.has(diaSemana);
     if (negocioId) {
-      if (esLaborable) {
-        await cargarHorarios(dateStr, negocioId);
-      } else {
-        await cargarEspeciales(dateStr, negocioId);
-      }
+      if (esLaborable) await cargarHorarios(dateStr, negocioId);
+      else await cargarEspeciales(dateStr, negocioId);
     }
   }
 
-  // Lapsos bloqueos (días laborables)
   function agregarLapso() {
     const ultimo = lapsos[lapsos.length - 1];
     setLapsos(prev => [...prev, { desde: ultimo?.hasta ?? '09:00', hasta: ultimo?.hasta ?? '13:00' }]);
@@ -198,7 +215,6 @@ export default function BloqueosPage() {
     setLapsos(prev => prev.map((l, i) => i === idx ? { ...l, [campo]: valor } : l));
   }
 
-  // Lapsos especiales (días no laborables)
   function agregarLapsoEspecial() {
     const ultimo = lapsosEspeciales[lapsosEspeciales.length - 1];
     setLapsosEspeciales(prev => [...prev, { desde: ultimo?.hasta ?? '09:00', hasta: ultimo?.hasta ?? '13:00' }]);
@@ -225,9 +241,7 @@ export default function BloqueosPage() {
     for (const lapso of lapsosEspeciales) {
       const ini = toMinutes(lapso.desde);
       const fin = toMinutes(lapso.hasta);
-      for (let min = ini; min < fin; min += intervaloEspecial) {
-        slots.push(fromMinutes(min));
-      }
+      for (let min = ini; min < fin; min += intervaloEspecial) slots.push(fromMinutes(min));
     }
     return slots;
   }
@@ -238,25 +252,14 @@ export default function BloqueosPage() {
     setErrorEspecial('');
     const slots = generarSlotsEspeciales();
 
-    const { error: delError } = await supabase
-      .from('dias_especiales').delete()
-      .eq('negocio_id', negocioId).eq('fecha', selectedDate);
-
-    if (delError) {
-      setErrorEspecial(`Error al limpiar: ${delError.message}`);
-      setLoading(false);
-      return;
-    }
+    const { error: delError } = await supabase.from('dias_especiales').delete().eq('negocio_id', negocioId).eq('fecha', selectedDate);
+    if (delError) { setErrorEspecial(`Error al limpiar: ${delError.message}`); setLoading(false); return; }
 
     if (slots.length > 0) {
       const { error: insError } = await supabase.from('dias_especiales').insert(
         slots.map(hora => ({ negocio_id: negocioId, fecha: selectedDate, hora }))
       );
-      if (insError) {
-        setErrorEspecial(`Error al guardar: ${insError.message}`);
-        setLoading(false);
-        return;
-      }
+      if (insError) { setErrorEspecial(`Error al guardar: ${insError.message}`); setLoading(false); return; }
     }
 
     const nuevos = await cargarEspeciales(selectedDate, negocioId);
@@ -285,10 +288,12 @@ export default function BloqueosPage() {
       const min = toMinutes(hora);
       return lapsos.some(l => min >= toMinutes(l.desde) && min < toMinutes(l.hasta));
     });
-    const yaBloquead = bloqueos.filter(b => b.fecha === selectedDate && b.hora).map(b => b.hora!.slice(0, 5));
+    const yaBloquead = bloqueos
+      .filter(b => b.fecha === selectedDate && b.hora && b.empleado_id === empleadoBloqueo)
+      .map(b => b.hora!.slice(0, 5));
     const nuevas = horasABloquear.filter(h => !yaBloquead.includes(h));
     for (const hora of nuevas) {
-      await supabase.from('bloqueos').insert({ negocio_id: negocioId, fecha: selectedDate, hora });
+      await supabase.from('bloqueos').insert({ negocio_id: negocioId, fecha: selectedDate, hora, empleado_id: empleadoBloqueo });
     }
     await cargar();
     setLoading(false);
@@ -314,16 +319,19 @@ export default function BloqueosPage() {
   const isPartialBlocked = (d: string) => bloqueos.some(b => b.fecha === d && b.hora);
 
   const bloqueosDelDia = selectedDate ? bloqueos.filter(b => b.fecha === selectedDate) : [];
-  const gruposDelDia = agruparBloqueos(bloqueosDelDia);
-  const bloqueoTotal = bloqueosDelDia.find(b => !b.hora);
-  const tieneBloqueoTotal = !!bloqueoTotal;
+  const tieneBloqueoTotal = bloqueosDelDia.some(b => !b.hora);
 
   const esDiaLaborable = selectedDate
     ? diasLaborables.has(DIAS_ES[new Date(selectedDate + 'T12:00:00').getDay()])
     : true;
 
+  const gruposPorEmpleado = agruparPorEmpleado(bloqueosDelDia, empleados);
   const gruposEspeciales = agruparHoras(slotsEspeciales);
   const previewEspecial = generarSlotsEspeciales();
+
+  const nombreEmpleadoBloqueo = empleadoBloqueo
+    ? (empleados.find(e => e.id === empleadoBloqueo)?.nombre ?? 'Empleado')
+    : 'Todos';
 
   return (
     <div className="flex flex-col gap-6">
@@ -418,24 +426,48 @@ export default function BloqueosPage() {
                 </p>
               </div>
 
+              {/* Selector de empleado */}
+              {empleados.length > 1 && esDiaLaborable && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-zinc-500 shrink-0">Bloquear para:</span>
+                  <select
+                    value={empleadoBloqueo ?? ''}
+                    onChange={e => setEmpleadoBloqueo(e.target.value ? Number(e.target.value) : null)}
+                    className="flex-1 bg-zinc-800 border border-zinc-700 text-white rounded-lg px-2 py-1.5 text-xs"
+                  >
+                    <option value="">Todos</option>
+                    {empleados.map(e => (
+                      <option key={e.id} value={e.id}>{e.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {/* ── DÍA LABORABLE ── */}
               {esDiaLaborable && (
                 <>
                   {bloqueosDelDia.length > 0 && (
-                    <div className="flex flex-col gap-1.5">
+                    <div className="flex flex-col gap-2">
                       <p className="text-xs text-zinc-500 font-medium">Bloqueado</p>
-                      {bloqueoTotal && (
-                        <div className="flex items-center justify-between bg-zinc-800 rounded-lg px-3 py-1.5">
-                          <span className="text-sm text-zinc-300">Día completo</span>
-                          <button onClick={() => eliminarBloqueoTotal(bloqueoTotal.id)} className="text-zinc-600 hover:text-red-400 transition-colors"><X size={13} /></button>
-                        </div>
-                      )}
-                      {gruposDelDia.map((grupo, idx) => (
-                        <div key={idx} className="flex items-center justify-between bg-zinc-800 rounded-lg px-3 py-1.5">
-                          <span className="text-sm text-zinc-300">
-                            {grupo.desde === grupo.hasta ? `${grupo.desde} hs` : `${grupo.desde} – ${grupo.hasta} hs`}
-                          </span>
-                          <button onClick={() => eliminarGrupo(grupo.ids)} className="text-zinc-600 hover:text-red-400 transition-colors"><X size={13} /></button>
+                      {Array.from(gruposPorEmpleado.entries()).map(([key, grupo]) => (
+                        <div key={key} className="flex flex-col gap-1">
+                          {empleados.length > 1 && (
+                            <p className="text-[10px] text-zinc-600 font-medium uppercase tracking-wide">{grupo.nombre}</p>
+                          )}
+                          {grupo.bloqueos.find(b => !b.hora) && (
+                            <div className="flex items-center justify-between bg-zinc-800 rounded-lg px-3 py-1.5">
+                              <span className="text-sm text-zinc-300">Día completo</span>
+                              <button onClick={() => eliminarBloqueoTotal(grupo.bloqueos.find(b => !b.hora)!.id)} className="text-zinc-600 hover:text-red-400 transition-colors"><X size={13} /></button>
+                            </div>
+                          )}
+                          {agruparBloqueos(grupo.bloqueos).map((g, idx) => (
+                            <div key={idx} className="flex items-center justify-between bg-zinc-800 rounded-lg px-3 py-1.5">
+                              <span className="text-sm text-zinc-300">
+                                {g.desde === g.hasta ? `${g.desde} hs` : `${g.desde} – ${g.hasta} hs`}
+                              </span>
+                              <button onClick={() => eliminarGrupo(g.ids)} className="text-zinc-600 hover:text-red-400 transition-colors"><X size={13} /></button>
+                            </div>
+                          ))}
                         </div>
                       ))}
                     </div>
@@ -447,14 +479,14 @@ export default function BloqueosPage() {
                         onClick={async () => {
                           if (!negocioId || !selectedDate) return;
                           setLoading(true);
-                          await supabase.from('bloqueos').insert({ negocio_id: negocioId, fecha: selectedDate, hora: null });
+                          await supabase.from('bloqueos').insert({ negocio_id: negocioId, fecha: selectedDate, hora: null, empleado_id: empleadoBloqueo });
                           await cargar();
                           setLoading(false);
                         }}
                         disabled={loading}
                         className="w-full py-2 rounded-lg text-sm font-medium border border-zinc-700 text-zinc-400 hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50 transition-colors"
                       >
-                        Bloquear día completo
+                        Bloquear día completo{empleados.length > 1 ? ` · ${nombreEmpleadoBloqueo}` : ''}
                       </button>
 
                       <div className="flex flex-col gap-3">
@@ -488,7 +520,7 @@ export default function BloqueosPage() {
                       </div>
 
                       <button onClick={guardarLapsos} disabled={loading} className="w-full bg-white text-zinc-900 rounded-lg py-2 text-sm font-semibold hover:bg-zinc-200 disabled:opacity-50 transition-colors">
-                        {loading ? 'Guardando...' : 'Guardar bloqueos'}
+                        {loading ? 'Guardando...' : `Guardar bloqueos${empleados.length > 1 ? ` · ${nombreEmpleadoBloqueo}` : ''}`}
                       </button>
                     </div>
                   )}
@@ -498,7 +530,6 @@ export default function BloqueosPage() {
               {/* ── DÍA NO LABORABLE ── */}
               {!esDiaLaborable && (
                 <>
-                  {/* Slots especiales existentes */}
                   {slotsEspeciales.length > 0 && !editandoEspecial && (
                     <div className="flex flex-col gap-2">
                       <p className="text-xs text-zinc-500 font-medium">Turnos habilitados</p>
@@ -518,12 +549,9 @@ export default function BloqueosPage() {
                     </div>
                   )}
 
-                  {/* Sin especial, sin form */}
                   {slotsEspeciales.length === 0 && !editandoEspecial && (
                     <div className="flex flex-col gap-3">
-                      <p className="text-sm text-zinc-600 text-center py-2">
-                        Este día no tiene horarios configurados.
-                      </p>
+                      <p className="text-sm text-zinc-600 text-center py-2">Este día no tiene horarios configurados.</p>
                       <button
                         onClick={() => habilitarFormEspecial(false)}
                         className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm border border-blue-500/30 text-blue-400 hover:bg-blue-500/10 transition-colors"
@@ -533,7 +561,6 @@ export default function BloqueosPage() {
                     </div>
                   )}
 
-                  {/* Formulario especial */}
                   {editandoEspecial && (
                     <div className="flex flex-col gap-4 border-t border-zinc-800 pt-4">
                       <p className="text-xs text-zinc-400 font-medium">Lapsos de atención</p>
@@ -580,9 +607,7 @@ export default function BloqueosPage() {
                         Se van a habilitar <span className="text-zinc-300 font-medium">{previewEspecial.length} turnos</span>
                       </p>
 
-                      {errorEspecial && (
-                        <p className="text-xs text-red-400">{errorEspecial}</p>
-                      )}
+                      {errorEspecial && <p className="text-xs text-red-400">{errorEspecial}</p>}
 
                       <div className="flex gap-2">
                         <button onClick={() => { setEditandoEspecial(false); setErrorEspecial(''); }} className="flex-1 py-2 rounded-lg text-sm border border-zinc-700 text-zinc-400 hover:bg-zinc-800 transition-colors">

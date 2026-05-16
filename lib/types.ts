@@ -30,4 +30,5 @@ export interface Bloqueo {
   id: number;
   fecha: string;
   hora: string | null;
+  empleado_id: number | null;
 }
