@@ -25,6 +25,7 @@ type Slot = {
     cliente_telefono: string;
     completado: boolean;
     origen: 'bot' | 'manual';
+    empleadoNombre?: string;
   };
 };
 
@@ -76,7 +77,7 @@ export default function TurnosPage() {
 
     const [{ data: horarios }, { data: reservas }, { data: bloqueos }] = await Promise.all([
       supabase.from('horarios').select('hora').eq('negocio_id', nId).eq('dia_semana', diaSemana).eq('activo', true).order('hora'),
-      supabase.from('reservas').select('id, hora, cliente_nombre, cliente_telefono, completado, origen').eq('negocio_id', nId).eq('fecha', f),
+      supabase.from('reservas').select('id, hora, cliente_nombre, cliente_telefono, completado, origen, empleados(nombre)').eq('negocio_id', nId).eq('fecha', f),
       supabase.from('bloqueos').select('hora').eq('negocio_id', nId).eq('fecha', f),
     ]);
 
@@ -100,7 +101,7 @@ export default function TurnosPage() {
 
     const slotsList: Slot[] = horasBase.map(hora => {
       const reserva = reservaMap.get(hora);
-      return { hora, reserva: reserva ? { id: reserva.id, cliente_nombre: reserva.cliente_nombre, cliente_telefono: reserva.cliente_telefono, completado: reserva.completado, origen: (reserva.origen ?? 'manual') as 'bot' | 'manual' } : undefined };
+      return { hora, reserva: reserva ? { id: reserva.id, cliente_nombre: reserva.cliente_nombre, cliente_telefono: reserva.cliente_telefono, completado: reserva.completado, origen: (reserva.origen ?? 'manual') as 'bot' | 'manual', empleadoNombre: (reserva as any).empleados?.nombre ?? undefined } : undefined };
     });
 
     setSlots(slotsList);
@@ -284,7 +285,10 @@ export default function TurnosPage() {
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">Manual</span>
                           )}
                         </div>
-                        <p className="text-xs text-zinc-600">{slot.reserva.cliente_telefono}</p>
+                        <p className="text-xs text-zinc-600">
+                          {slot.reserva.cliente_telefono}
+                          {slot.reserva.empleadoNombre && <span className="ml-2 text-zinc-700">· {slot.reserva.empleadoNombre}</span>}
+                        </p>
                       </div>
                     ) : !bloqueado ? (
                       <span className="text-sm text-zinc-600">Disponible</span>

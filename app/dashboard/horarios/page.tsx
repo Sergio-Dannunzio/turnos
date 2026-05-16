@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, User } from 'lucide-react';
+
+type Empleado = { id: number; nombre: string; activo: boolean };
 
 const DIAS = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
 
@@ -63,6 +65,8 @@ function detectarConfig(horarios: { dia_semana: string; hora: string }[]) {
 }
 
 export default function HorariosPage() {
+  const [empleados, setEmpleados] = useState<Empleado[]>([]);
+  const [empleadoId, setEmpleadoId] = useState<number | null>(null);
   const [dias, setDias] = useState<string[]>(['lunes', 'martes', 'miercoles', 'jueves', 'viernes']);
   const [lapsos, setLapsos] = useState<Lapso[]>([{ desde: '09:00', hasta: '18:00' }]);
   const [intervalo, setIntervalo] = useState(60);
@@ -75,15 +79,29 @@ export default function HorariosPage() {
     fetch('/api/dashboard/horarios')
       .then(r => r.json())
       .then(data => {
-        const config = detectarConfig(data.horarios ?? []);
-        if (config) {
-          setDias(config.dias);
-          setLapsos(config.lapsos);
-          setIntervalo(config.intervalo);
+        const activos = (data.empleados ?? []).filter((e: Empleado) => e.activo);
+        setEmpleados(activos);
+        if (activos.length > 0) {
+          setEmpleadoId(activos[0].id);
+          const config = detectarConfig((data.horarios ?? []).filter((h: any) => h.empleado_id === activos[0].id));
+          if (config) { setDias(config.dias); setLapsos(config.lapsos); setIntervalo(config.intervalo); }
         }
       })
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!empleadoId) return;
+    setLoading(true);
+    fetch(`/api/dashboard/horarios?empleadoId=${empleadoId}`)
+      .then(r => r.json())
+      .then(data => {
+        const config = detectarConfig(data.horarios ?? []);
+        if (config) { setDias(config.dias); setLapsos(config.lapsos); setIntervalo(config.intervalo); }
+        else { setDias(['lunes', 'martes', 'miercoles', 'jueves', 'viernes']); setLapsos([{ desde: '09:00', hasta: '18:00' }]); setIntervalo(60); }
+      })
+      .finally(() => setLoading(false));
+  }, [empleadoId]);
 
   function toggleDia(dia: string) {
     setExito(false);
@@ -135,7 +153,7 @@ export default function HorariosPage() {
     const res = await fetch('/api/dashboard/horarios', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ horarios: preview }),
+      body: JSON.stringify({ horarios: preview, empleadoId }),
     });
 
     setSaving(false);
@@ -165,6 +183,21 @@ export default function HorariosPage() {
       <p className="text-sm text-zinc-500 mb-6">
         Modificá los días y horarios en los que recibís turnos. Los cambios reemplazan la configuración anterior.
       </p>
+
+      {empleados.length > 1 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 flex items-center gap-3 mb-4">
+          <User size={15} className="text-zinc-500 shrink-0" />
+          <select
+            value={empleadoId ?? ''}
+            onChange={e => setEmpleadoId(Number(e.target.value))}
+            className="flex-1 bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-2 text-sm"
+          >
+            {empleados.map(e => (
+              <option key={e.id} value={e.id}>{e.nombre}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
 
