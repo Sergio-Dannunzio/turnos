@@ -17,6 +17,8 @@ function addDays(dateStr: string, n: number) {
   return d.toISOString().split('T')[0];
 }
 
+type Empleado = { id: number; nombre: string };
+
 type Slot = {
   hora: string;
   reserva?: {
@@ -25,7 +27,6 @@ type Slot = {
     cliente_telefono: string;
     completado: boolean;
     origen: 'bot' | 'manual';
-    empleadoNombre?: string;
   };
 };
 
@@ -33,6 +34,8 @@ type FormState = { nombre: string; telefono: string };
 
 export default function TurnosPage() {
   const [negocioId, setNegocioId] = useState<number | null>(null);
+  const [empleados, setEmpleados] = useState<Empleado[]>([]);
+  const [empleadoId, setEmpleadoId] = useState<number | null>(null);
   const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0]);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,34 +53,47 @@ export default function TurnosPage() {
     async function init() {
       const { data: { user } } = await supabase.auth.getUser();
       const { data: profile } = await supabase.from('profiles').select('negocio_id').eq('id', user!.id).single();
-      setNegocioId(profile!.negocio_id);
-      await cargar(profile!.negocio_id, fecha);
+      const nId = profile!.negocio_id;
+      setNegocioId(nId);
+
+      const { data: emps } = await supabase.from('empleados').select('id, nombre').eq('negocio_id', nId).eq('activo', true).order('id');
+      const lista = emps ?? [];
+      setEmpleados(lista);
+      const eId = lista[0]?.id ?? null;
+      setEmpleadoId(eId);
+      await cargar(nId, fecha, eId);
     }
     init();
   }, []);
 
   useEffect(() => {
-    if (negocioId) cargar(negocioId, fecha);
-  }, [fecha]);
+    if (negocioId && empleadoId !== undefined) cargar(negocioId, fecha, empleadoId);
+  }, [fecha, empleadoId]);
 
   useEffect(() => {
     if (!negocioId) return;
     const channel = supabase
       .channel('reservas-turnos')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reservas', filter: `negocio_id=eq.${negocioId}` }, () => {
-        cargar(negocioId, fecha);
+        cargar(negocioId, fecha, empleadoId);
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [negocioId, fecha]);
+  }, [negocioId, fecha, empleadoId]);
 
-  async function cargar(nId: number, f: string) {
+  async function cargar(nId: number, f: string, eId: number | null) {
     setLoading(true);
     const diaSemana = DIAS_ES[new Date(f + 'T12:00:00').getDay()];
 
+    let horariosQuery = supabase.from('horarios').select('hora').eq('negocio_id', nId).eq('dia_semana', diaSemana).eq('activo', true).order('hora');
+    if (eId) horariosQuery = horariosQuery.eq('empleado_id', eId);
+
+    let reservasQuery = supabase.from('reservas').select('id, hora, cliente_nombre, cliente_telefono, completado, origen').eq('negocio_id', nId).eq('fecha', f);
+    if (eId) reservasQuery = reservasQuery.eq('empleado_id', eId);
+
     const [{ data: horarios }, { data: reservas }, { data: bloqueos }] = await Promise.all([
-      supabase.from('horarios').select('hora').eq('negocio_id', nId).eq('dia_semana', diaSemana).eq('activo', true).order('hora'),
-      supabase.from('reservas').select('id, hora, cliente_nombre, cliente_telefono, completado, origen, empleados(nombre)').eq('negocio_id', nId).eq('fecha', f),
+      horariosQuery,
+      reservasQuery,
       supabase.from('bloqueos').select('hora').eq('negocio_id', nId).eq('fecha', f),
     ]);
 
@@ -101,7 +117,16 @@ export default function TurnosPage() {
 
     const slotsList: Slot[] = horasBase.map(hora => {
       const reserva = reservaMap.get(hora);
-      return { hora, reserva: reserva ? { id: reserva.id, cliente_nombre: reserva.cliente_nombre, cliente_telefono: reserva.cliente_telefono, completado: reserva.completado, origen: (reserva.origen ?? 'manual') as 'bot' | 'manual', empleadoNombre: (reserva as any).empleados?.nombre ?? undefined } : undefined };
+      return {
+        hora,
+        reserva: reserva ? {
+          id: reserva.id,
+          cliente_nombre: reserva.cliente_nombre,
+          cliente_telefono: reserva.cliente_telefono,
+          completado: reserva.completado,
+          origen: (reserva.origen ?? 'manual') as 'bot' | 'manual',
+        } : undefined,
+      };
     });
 
     setSlots(slotsList);
@@ -111,7 +136,7 @@ export default function TurnosPage() {
 
   async function toggleCompletado(reservaId: number, actual: boolean) {
     await supabase.from('reservas').update({ completado: !actual }).eq('id', reservaId);
-    if (negocioId) cargar(negocioId, fecha);
+    if (negocioId) cargar(negocioId, fecha, empleadoId);
   }
 
   async function registrarManual(hora: string) {
@@ -124,16 +149,17 @@ export default function TurnosPage() {
       cliente_nombre: form.nombre || 'Sin nombre',
       cliente_telefono: form.telefono || '-',
       origen: 'manual',
+      empleado_id: empleadoId,
     });
     setFormSlot(null);
     setForm({ nombre: '', telefono: '' });
     setSaving(false);
-    cargar(negocioId, fecha);
+    cargar(negocioId, fecha, empleadoId);
   }
 
   async function cancelarReserva(reservaId: number) {
     await supabase.from('reservas').delete().eq('id', reservaId);
-    if (negocioId) cargar(negocioId, fecha);
+    if (negocioId) cargar(negocioId, fecha, empleadoId);
   }
 
   const total = slots.length;
@@ -142,8 +168,6 @@ export default function TurnosPage() {
 
   const ahora = new Date().toTimeString().slice(0, 5);
   const esHoy = fecha === new Date().toISOString().split('T')[0];
-
-  // Slot actual: el último que ya arrancó (para incluirlo aunque hayan pasado unos minutos)
   const slotActual = slots.map(s => s.hora).filter(h => h <= ahora).at(-1);
 
   const slotsFiltrados = soloDisponibles
@@ -170,21 +194,16 @@ export default function TurnosPage() {
           <p className="text-sm text-zinc-500 capitalize">{formatFecha(fecha)}</p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Toggle disponibles/todos */}
           {!loading && slots.length > 0 && (
             <button
               onClick={() => setSoloDisponibles(v => !v)}
               className={`text-xs px-2.5 py-2 rounded-lg transition-colors ${
-                soloDisponibles
-                  ? 'bg-zinc-700 text-white'
-                  : 'text-zinc-500 hover:text-white hover:bg-zinc-800'
+                soloDisponibles ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white hover:bg-zinc-800'
               }`}
             >
               {soloDisponibles ? 'Disponibles' : 'Todos'}
             </button>
           )}
-
-          {/* Navegación de fecha */}
           <div className="flex items-center gap-1">
             <button onClick={() => setFecha(f => addDays(f, -1))} className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors">
               <ChevronLeft size={18} />
@@ -212,6 +231,25 @@ export default function TurnosPage() {
           </div>
         </div>
       </div>
+
+      {/* Tabs de empleados */}
+      {empleados.length > 1 && (
+        <div className="flex gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1">
+          {empleados.map(e => (
+            <button
+              key={e.id}
+              onClick={() => { setEmpleadoId(e.id); setFormSlot(null); }}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                empleadoId === e.id
+                  ? 'bg-zinc-700 text-white'
+                  : 'text-zinc-500 hover:text-white hover:bg-zinc-800'
+              }`}
+            >
+              {e.nombre}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3">
@@ -252,86 +290,78 @@ export default function TurnosPage() {
         <div className="flex flex-col gap-2">
           {slotsFiltrados.map(slot => (
             <div key={slot.hora}>
-              {/* Slot card */}
               {(() => {
                 const bloqueado = horasBloqueadas.includes(slot.hora);
                 return (
-              <div className={`bg-zinc-900 border rounded-xl p-4 transition-colors ${
-                bloqueado
-                  ? 'border-orange-500/20'
-                  : slot.reserva?.completado
-                  ? 'border-green-500/20'
-                  : slot.reserva
-                  ? 'border-zinc-700'
-                  : 'border-zinc-800'
-              }`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <span className="text-sm font-semibold text-zinc-300 w-12">{slot.hora}</span>
-                    {bloqueado && (
-                      <span className="flex items-center gap-1 text-xs text-orange-400">
-                        <Ban size={11} /> Bloqueado
-                      </span>
-                    )}
-                    {!bloqueado && slot.reserva ? (
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className={`text-sm font-medium ${slot.reserva.completado ? 'text-zinc-500 line-through' : 'text-white'}`}>
-                            {slot.reserva.cliente_nombre}
-                          </p>
-                          {slot.reserva.origen === 'bot' ? (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">Bot</span>
-                          ) : (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">Manual</span>
-                          )}
-                        </div>
-                        <p className="text-xs text-zinc-600">
-                          {slot.reserva.cliente_telefono}
-                          {slot.reserva.empleadoNombre && <span className="ml-2 text-zinc-700">· {slot.reserva.empleadoNombre}</span>}
-                        </p>
+                  <div className={`bg-zinc-900 border rounded-xl p-4 transition-colors ${
+                    bloqueado ? 'border-orange-500/20'
+                    : slot.reserva?.completado ? 'border-green-500/20'
+                    : slot.reserva ? 'border-zinc-700'
+                    : 'border-zinc-800'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <span className="text-sm font-semibold text-zinc-300 w-12">{slot.hora}</span>
+                        {bloqueado && (
+                          <span className="flex items-center gap-1 text-xs text-orange-400">
+                            <Ban size={11} /> Bloqueado
+                          </span>
+                        )}
+                        {!bloqueado && slot.reserva ? (
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className={`text-sm font-medium ${slot.reserva.completado ? 'text-zinc-500 line-through' : 'text-white'}`}>
+                                {slot.reserva.cliente_nombre}
+                              </p>
+                              {slot.reserva.origen === 'bot' ? (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">Bot</span>
+                              ) : (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">Manual</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-zinc-600">{slot.reserva.cliente_telefono}</p>
+                          </div>
+                        ) : !bloqueado ? (
+                          <span className="text-sm text-zinc-600">Disponible</span>
+                        ) : null}
                       </div>
-                    ) : !bloqueado ? (
-                      <span className="text-sm text-zinc-600">Disponible</span>
-                    ) : null}
-                  </div>
 
-                  <div className="flex items-center gap-2">
-                    {slot.reserva ? (
-                      <>
-                        <button
-                          onClick={() => toggleCompletado(slot.reserva!.id, slot.reserva!.completado)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                            slot.reserva.completado
-                              ? 'bg-green-500/20 text-green-400 hover:bg-zinc-800 hover:text-zinc-400'
-                              : 'bg-zinc-800 text-zinc-400 hover:bg-green-500/20 hover:text-green-400'
-                          }`}
-                        >
-                          <Check size={12} />
-                          {slot.reserva.completado ? 'Completado' : 'Marcar'}
-                        </button>
-                        <button
-                          onClick={() => cancelarReserva(slot.reserva!.id)}
-                          className="p-1.5 rounded-lg text-zinc-700 hover:text-red-400 hover:bg-zinc-800 transition-colors"
-                        >
-                          <X size={14} />
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={() => setFormSlot(formSlot === slot.hora ? null : slot.hora)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
-                      >
-                        <Plus size={12} />
-                        Registrar
-                      </button>
-                    )}
+                      <div className="flex items-center gap-2">
+                        {slot.reserva ? (
+                          <>
+                            <button
+                              onClick={() => toggleCompletado(slot.reserva!.id, slot.reserva!.completado)}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                slot.reserva.completado
+                                  ? 'bg-green-500/20 text-green-400 hover:bg-zinc-800 hover:text-zinc-400'
+                                  : 'bg-zinc-800 text-zinc-400 hover:bg-green-500/20 hover:text-green-400'
+                              }`}
+                            >
+                              <Check size={12} />
+                              {slot.reserva.completado ? 'Completado' : 'Marcar'}
+                            </button>
+                            <button
+                              onClick={() => cancelarReserva(slot.reserva!.id)}
+                              className="p-1.5 rounded-lg text-zinc-700 hover:text-red-400 hover:bg-zinc-800 transition-colors"
+                            >
+                              <X size={14} />
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => setFormSlot(formSlot === slot.hora ? null : slot.hora)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+                          >
+                            <Plus size={12} />
+                            Registrar
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
                 );
               })()}
 
-              {/* Inline form */}
               {formSlot === slot.hora && (
                 <div className="bg-zinc-900 border border-zinc-700 border-t-0 rounded-b-xl px-4 pb-4 pt-3 flex flex-col gap-2">
                   <div className="flex gap-2">
