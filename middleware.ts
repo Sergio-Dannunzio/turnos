@@ -30,6 +30,10 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
+  if (pathname === '/' || pathname === '/privacidad') {
+    return response;
+  }
+
   if (!user) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
