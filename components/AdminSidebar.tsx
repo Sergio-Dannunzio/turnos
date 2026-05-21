@@ -2,12 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Building2, LogOut, Zap } from 'lucide-react';
+import { Building2, LogOut, MessageSquare, Zap, BarChart2 } from 'lucide-react';
 import { createSupabaseBrowser } from '@/lib/supabase-browser';
 
 const links = [
   { href: '/admin', label: 'Negocios', icon: Building2, exact: true },
+  { href: '/admin/whatsapp', label: 'WhatsApp', icon: MessageSquare },
   { href: '/admin/planes', label: 'Planes', icon: Zap },
+  { href: '/admin/tokens', label: 'Tokens', icon: BarChart2 },
 ];
 
 export default function AdminSidebar() {

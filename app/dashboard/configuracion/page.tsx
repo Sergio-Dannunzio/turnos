@@ -1,19 +1,31 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Plus, X, Upload } from 'lucide-react';
 import { createSupabaseBrowser } from '@/lib/supabase-browser';
 
 type Empleado = { id: number; nombre: string; activo: boolean };
+type WspPerfil = { description: string; email: string; website: string; profile_picture_url: string };
 
 export default function ConfiguracionPage() {
-  const [form, setForm] = useState({ nombre: '', email: '', telefono: '', direccion: '' });
+  const [form, setForm] = useState({ nombre: '', email: '', telefono: '', direccion: '', presentacion: '' });
   const [negocioId, setNegocioId] = useState<number | null>(null);
   const [asignacion, setAsignacion] = useState<'automatica' | 'cliente_elige'>('automatica');
   const [empleados, setEmpleados] = useState<Empleado[]>([]);
   const [nuevoEmpleado, setNuevoEmpleado] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+
+  const [wsp, setWsp] = useState<WspPerfil>({ description: '', email: '', website: '', profile_picture_url: '' });
+  const [isSharedNumber, setIsSharedNumber] = useState(true);
+  const [wspLoading, setWspLoading] = useState(false);
+  const [wspSuccess, setWspSuccess] = useState('');
+  const [wspError, setWspError] = useState('');
+  const [fotoPreview, setFotoPreview] = useState<string | null>(null);
+  const [fotoFile, setFotoFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+
   const supabase = createSupabaseBrowser();
 
   useEffect(() => {
@@ -25,7 +37,7 @@ export default function ConfiguracionPage() {
 
       const { data: negocio } = await supabase.from('negocios').select('*').eq('id', profile.negocio_id).single();
       if (negocio) {
-        setForm({ nombre: negocio.nombre ?? '', email: negocio.email ?? '', telefono: negocio.telefono ?? '', direccion: negocio.direccion ?? '' });
+        setForm({ nombre: negocio.nombre ?? '', email: negocio.email ?? '', telefono: negocio.telefono ?? '', direccion: negocio.direccion ?? '', presentacion: negocio.presentacion ?? '' });
         setAsignacion(negocio.asignacion_empleados ?? 'automatica');
       }
 
@@ -33,6 +45,25 @@ export default function ConfiguracionPage() {
       setEmpleados(emps ?? []);
     }
     cargar();
+
+    fetch('/api/whatsapp/creds')
+      .then(r => r.json())
+      .then(data => { if (!data.error) setIsSharedNumber(data.isSharedNumber ?? true); })
+      .catch(() => {});
+
+    fetch('/api/whatsapp/perfil')
+      .then(r => r.json())
+      .then(data => {
+        if (!data.error) {
+          setWsp({
+            description: data.description ?? '',
+            email: data.email ?? '',
+            website: data.websites?.[0] ?? '',
+            profile_picture_url: data.profile_picture_url ?? '',
+          });
+        }
+      })
+      .catch(() => {});
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -64,6 +95,46 @@ export default function ConfiguracionPage() {
     setEmpleados(prev => prev.filter(e => e.id !== id));
   }
 
+  function handleFotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFotoFile(file);
+    setFotoPreview(URL.createObjectURL(file));
+  }
+
+  async function handleWspSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setWspLoading(true);
+    setWspSuccess('');
+    setWspError('');
+
+    try {
+      if (fotoFile) {
+        const fd = new FormData();
+        fd.append('file', fotoFile);
+        const fotoRes = await fetch('/api/whatsapp/foto', { method: 'POST', body: fd });
+        const fotoData = await fotoRes.json();
+        if (!fotoRes.ok) throw new Error(fotoData.error ?? 'Error al subir foto');
+        setFotoFile(null);
+      }
+
+      const perfilRes = await fetch('/api/whatsapp/perfil', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: wsp.description, email: wsp.email, website: wsp.website }),
+      });
+      const perfilData = await perfilRes.json();
+      if (!perfilRes.ok) throw new Error(perfilData.error ?? 'Error al guardar perfil');
+
+      setWspSuccess('Perfil de WhatsApp actualizado.');
+      setTimeout(() => setWspSuccess(''), 3000);
+    } catch (err: unknown) {
+      setWspError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setWspLoading(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6 max-w-lg">
       <div>
@@ -90,6 +161,20 @@ export default function ConfiguracionPage() {
             />
           </div>
         ))}
+
+        {/* Presentación del negocio (solo Pro) */}
+        <div>
+          <label className="block text-sm font-medium text-zinc-400 mb-1">Presentación del negocio</label>
+          <textarea
+            value={form.presentacion}
+            onChange={e => setForm(prev => ({ ...prev, presentacion: e.target.value }))}
+            maxLength={500}
+            rows={4}
+            placeholder="Ej: Somos Peluquería Roma, especialistas en cortes modernos ubicados en Av. Corrientes 1234. Atendemos de lunes a sábado."
+            className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500 resize-none placeholder-zinc-600"
+          />
+          <p className="text-xs text-zinc-600 mt-1 text-right">{form.presentacion.length}/500</p>
+        </div>
 
         {/* Asignación de empleados */}
         <div>
@@ -124,6 +209,90 @@ export default function ConfiguracionPage() {
           className="bg-white text-zinc-900 rounded-lg py-2 text-sm font-semibold hover:bg-zinc-200 disabled:opacity-50 transition-colors"
         >
           {loading ? 'Guardando...' : 'Guardar cambios'}
+        </button>
+      </form>
+
+      {/* Perfil de WhatsApp */}
+      <form onSubmit={handleWspSubmit} className={`bg-zinc-900 border border-zinc-800 rounded-xl p-6 flex flex-col gap-4 ${isSharedNumber ? 'opacity-50 pointer-events-none' : ''}`}>
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-medium text-zinc-400">Perfil de WhatsApp</p>
+          {isSharedNumber && (
+            <span className="text-xs text-zinc-500 bg-zinc-800 px-2.5 py-1 rounded-lg">Gestionado por el administrador</span>
+          )}
+        </div>
+
+        {/* Foto */}
+        <div className="flex items-center gap-4">
+          <div
+            onClick={() => fileInputRef.current?.click()}
+            className="relative w-16 h-16 rounded-full bg-zinc-800 border-2 border-zinc-700 flex items-center justify-center cursor-pointer overflow-hidden hover:border-zinc-500 transition-colors"
+          >
+            {fotoPreview || wsp.profile_picture_url ? (
+              <img src={fotoPreview ?? wsp.profile_picture_url} alt="Foto perfil" className="w-full h-full object-cover" />
+            ) : (
+              <Upload size={20} className="text-zinc-600" />
+            )}
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="text-sm text-zinc-400 hover:text-white transition-colors"
+            >
+              {fotoPreview ? 'Cambiar imagen' : 'Subir foto de perfil'}
+            </button>
+            <p className="text-xs text-zinc-600 mt-0.5">JPG o PNG. Se verá en WhatsApp.</p>
+          </div>
+          <input ref={fileInputRef} type="file" accept="image/jpeg,image/png" className="hidden" onChange={handleFotoChange} />
+        </div>
+
+        {/* Descripción */}
+        <div>
+          <label className="block text-sm font-medium text-zinc-400 mb-1">Descripción</label>
+          <textarea
+            value={wsp.description}
+            onChange={e => setWsp(prev => ({ ...prev, description: e.target.value }))}
+            maxLength={256}
+            rows={3}
+            placeholder="Describí tu negocio en pocas palabras..."
+            className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500 resize-none placeholder-zinc-600"
+          />
+          <p className="text-xs text-zinc-600 mt-1 text-right">{wsp.description.length}/256</p>
+        </div>
+
+        {/* Email */}
+        <div>
+          <label className="block text-sm font-medium text-zinc-400 mb-1">Email</label>
+          <input
+            type="email"
+            value={wsp.email}
+            onChange={e => setWsp(prev => ({ ...prev, email: e.target.value }))}
+            placeholder="contacto@tunegocio.com"
+            className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500 placeholder-zinc-600"
+          />
+        </div>
+
+        {/* Sitio web */}
+        <div>
+          <label className="block text-sm font-medium text-zinc-400 mb-1">Sitio web</label>
+          <input
+            type="url"
+            value={wsp.website}
+            onChange={e => setWsp(prev => ({ ...prev, website: e.target.value }))}
+            placeholder="https://tunegocio.com"
+            className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500 placeholder-zinc-600"
+          />
+        </div>
+
+        {wspError && <p className="text-red-400 text-sm">{wspError}</p>}
+        {wspSuccess && <p className="text-green-400 text-sm">{wspSuccess}</p>}
+
+        <button
+          type="submit"
+          disabled={wspLoading}
+          className="bg-white text-zinc-900 rounded-lg py-2 text-sm font-semibold hover:bg-zinc-200 disabled:opacity-50 transition-colors"
+        >
+          {wspLoading ? 'Guardando...' : 'Guardar perfil de WhatsApp'}
         </button>
       </form>
 

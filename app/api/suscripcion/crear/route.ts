@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServer, createSupabaseAdmin } from '@/lib/supabase-server';
 
 const PRECIOS: Record<string, { monto: number; titulo: string }> = {
-  basico: { monto: Number(process.env.MP_PRECIO_BASICO ?? 35000), titulo: 'Plan Básico — Turnixia' },
-  pro:    { monto: Number(process.env.MP_PRECIO_PRO ?? 50000),    titulo: 'Plan Pro — Turnixia' },
+  basico: { monto: Number(process.env.MP_PRECIO_BASICO ?? 58800), titulo: 'Plan Básico — Turnixia' },
+  pro:    { monto: Number(process.env.MP_PRECIO_PRO ?? 88200),    titulo: 'Plan Pro — Turnixia' },
 };
 
 const DESCUENTO_PRIMER_MES = 0.25;

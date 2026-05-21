@@ -7,9 +7,10 @@ import { MessageSquare } from 'lucide-react';
 type Mensaje = {
   id: number;
   cliente_telefono: string;
-  rol: 'cliente' | 'bot';
+  rol: 'cliente' | 'bot' | 'humano';
   contenido: string;
   creado_en: string;
+  canal?: 'whatsapp' | 'voz';
 };
 
 function formatTelefono(tel: string) {
@@ -35,7 +36,12 @@ export default function ChatsPage() {
   const [mensajes, setMensajes] = useState<Mensaje[]>([]);
   const [contactoActivo, setContactoActivo] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [texto, setTexto] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [pausadoHasta, setPausadoHasta] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const pausaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const supabase = createSupabaseBrowser();
 
   async function cargar(nId: number) {
@@ -92,6 +98,61 @@ export default function ChatsPage() {
     }
   }, [loading, contactos.length]);
 
+  function aplicarPausa(hasta: string | null) {
+    if (pausaTimerRef.current) clearTimeout(pausaTimerRef.current);
+    setPausadoHasta(hasta);
+    if (hasta) {
+      const ms = new Date(hasta).getTime() - Date.now();
+      if (ms > 0) pausaTimerRef.current = setTimeout(() => setPausadoHasta(null), ms);
+    }
+  }
+
+  useEffect(() => {
+    if (!contactoActivo) { aplicarPausa(null); return; }
+    fetch(`/api/whatsapp/pausa?telefono=${encodeURIComponent(contactoActivo)}`)
+      .then(r => r.json())
+      .then(d => aplicarPausa(d.activa ? d.pausado_hasta : null))
+      .catch(() => {});
+    return () => { if (pausaTimerRef.current) clearTimeout(pausaTimerRef.current); };
+  }, [contactoActivo]);
+
+  async function reactivarBot() {
+    if (!contactoActivo) return;
+    await fetch('/api/whatsapp/pausa', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telefono: contactoActivo }),
+    });
+    aplicarPausa(null);
+  }
+
+  async function enviar() {
+    if (!contactoActivo || !texto.trim() || enviando) return;
+    setEnviando(true);
+    try {
+      const res = await fetch('/api/whatsapp/enviar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: contactoActivo, mensaje: texto.trim() }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTexto('');
+        aplicarPausa(data.pausado_hasta ?? null);
+        inputRef.current?.focus();
+      }
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      enviar();
+    }
+  }
+
   return (
     <div className="flex h-[calc(100vh-4rem)] -m-6 overflow-hidden rounded-xl border border-zinc-800">
 
@@ -137,7 +198,7 @@ export default function ChatsPage() {
                   </span>
                 </div>
                 <p className="text-xs text-zinc-500 truncate">
-                  {ultimo.rol === 'bot' ? '🤖 ' : ''}{ultimo.contenido}
+                  {ultimo.canal === 'voz' ? '📞 ' : ultimo.rol === 'bot' ? '🤖 ' : ultimo.rol === 'humano' ? 'Vos: ' : ''}{ultimo.contenido}
                 </p>
               </button>
             ))
@@ -158,9 +219,22 @@ export default function ChatsPage() {
               <p className="text-xs text-zinc-500">{thread.length} mensaje{thread.length !== 1 ? 's' : ''}</p>
             </div>
 
+            {pausadoHasta && (
+              <div className="px-4 py-2 bg-amber-950/60 border-b border-amber-800/40 flex items-center justify-between shrink-0">
+                <p className="text-xs text-amber-300">
+                  🤚 Bot pausado · se reactiva a las {formatHora(pausadoHasta)}
+                </p>
+                <button
+                  onClick={reactivarBot}
+                  className="text-xs text-amber-400 hover:text-amber-200 font-medium underline underline-offset-2 transition-colors"
+                >
+                  Reactivar ahora
+                </button>
+              </div>
+            )}
+
             <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-2">
               {thread.map((m, i) => {
-                const esBot = m.rol === 'bot';
                 const prev = thread[i - 1];
                 const muestraFecha = !prev ||
                   new Date(m.creado_en).toDateString() !== new Date(prev.creado_en).toDateString();
@@ -176,14 +250,22 @@ export default function ChatsPage() {
                         </span>
                       </div>
                     )}
-                    <div className={`flex ${esBot ? 'justify-start' : 'justify-end'}`}>
+                    <div className={`flex ${m.rol === 'cliente' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-sm lg:max-w-md px-3 py-2 rounded-2xl text-sm ${
-                        esBot
-                          ? 'bg-zinc-800 text-zinc-100 rounded-tl-sm'
-                          : 'bg-white text-zinc-900 rounded-tr-sm'
+                        m.rol === 'cliente'
+                          ? 'bg-white text-zinc-900 rounded-tr-sm'
+                          : m.rol === 'humano'
+                          ? 'bg-blue-600 text-white rounded-tl-sm'
+                          : 'bg-zinc-800 text-zinc-100 rounded-tl-sm'
                       }`}>
+                        {m.canal === 'voz' && (
+                          <p className={`text-xs mb-1 font-medium ${m.rol === 'cliente' ? 'text-zinc-400' : 'text-zinc-400'}`}>📞 llamada</p>
+                        )}
+                        {m.rol === 'humano' && (
+                          <p className="text-xs text-blue-200 mb-1 font-medium">Vos</p>
+                        )}
                         <p className="whitespace-pre-wrap break-words leading-relaxed">{m.contenido}</p>
-                        <p className={`text-xs mt-1 ${esBot ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                        <p className={`text-xs mt-1 ${m.rol === 'cliente' ? 'text-zinc-400' : m.rol === 'humano' ? 'text-blue-200' : 'text-zinc-500'}`}>
                           {formatHora(m.creado_en)}
                         </p>
                       </div>
@@ -192,6 +274,28 @@ export default function ChatsPage() {
                 );
               })}
               <div ref={bottomRef} />
+            </div>
+
+            {/* Input de respuesta */}
+            <div className="px-4 py-3 border-t border-zinc-800 shrink-0 flex gap-2 items-end">
+              <textarea
+                ref={inputRef}
+                value={texto}
+                onChange={e => setTexto(e.target.value)}
+                onKeyDown={onKeyDown}
+                placeholder="Escribí un mensaje... (Enter para enviar)"
+                rows={1}
+                className="flex-1 resize-none bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 max-h-32 overflow-y-auto"
+                style={{ fieldSizing: 'content' } as React.CSSProperties}
+                disabled={enviando}
+              />
+              <button
+                onClick={enviar}
+                disabled={!texto.trim() || enviando}
+                className="shrink-0 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors"
+              >
+                {enviando ? '...' : 'Enviar'}
+              </button>
             </div>
           </>
         )}

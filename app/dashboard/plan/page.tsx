@@ -3,7 +3,14 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createSupabaseBrowser } from '@/lib/supabase-browser';
-import { Check, Zap, Shield, Clock, Loader2 } from 'lucide-react';
+import { Check, Zap, Shield, Clock, Loader2, MessageCircle } from 'lucide-react';
+
+const SOPORTE_WP = process.env.NEXT_PUBLIC_SOPORTE_WP ?? '5492494018789';
+
+function wpLink(plan: string) {
+  const texto = encodeURIComponent(`Hola! Quiero activar el Plan ${plan} de Turnixia.`);
+  return `https://wa.me/${SOPORTE_WP}?text=${texto}`;
+}
 
 type Plan = 'trial' | 'basico' | 'pro';
 
@@ -24,34 +31,35 @@ const PLANES = [
       'Bot de WhatsApp (Sandbox)',
       'Dashboard completo',
       'Hasta 50 mensajes/día',
-      'Soporte por email',
+      'Llamadas ilimitadas',
     ],
     noFeatures: ['Número propio de WhatsApp', 'Recordatorios automáticos', 'Múltiples empleados'],
   },
   {
     id: 'basico' as Plan,
     nombre: 'Básico',
-    precio: 35,
+    precio: 40,
     descripcion: 'Para negocios que arrancan',
     color: 'blue',
     features: [
       'Bot de WhatsApp (número propio)',
       'Dashboard completo',
       'Mensajes ilimitados',
-      'Soporte por email',
+      'Llamadas ilimitadas',
     ],
     noFeatures: ['Recordatorios automáticos', 'Múltiples empleados'],
   },
   {
     id: 'pro' as Plan,
     nombre: 'Pro',
-    precio: 50,
+    precio: 60,
     descripcion: 'Para negocios en crecimiento',
     color: 'violet',
     features: [
       'Bot de WhatsApp (número propio)',
       'Dashboard completo',
       'Mensajes ilimitados',
+      'Llamadas ilimitadas',
       'Recordatorios automáticos 24hs',
       'Múltiples empleados',
       'Soporte prioritario',
@@ -223,6 +231,15 @@ export default function PlanPage() {
         </div>
       )}
 
+      {/* Aviso pagos por WhatsApp */}
+      <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-4 flex items-start gap-3">
+        <MessageCircle size={16} className="text-green-400 mt-0.5 shrink-0" />
+        <div>
+          <p className="text-sm text-white font-medium">Los pagos se coordinan por WhatsApp</p>
+          <p className="text-xs text-zinc-400 mt-0.5">Escribinos y activamos tu plan en minutos. Sin tarjeta ni trámites.</p>
+        </div>
+      </div>
+
       {/* Cards de planes */}
       <div>
         <p className="text-sm font-medium text-zinc-400 mb-4">Planes disponibles</p>
@@ -328,18 +345,19 @@ export default function PlanPage() {
                     —
                   </button>
                 ) : (
-                  <button
-                    onClick={() => suscribirse(p.id)}
-                    disabled={!!suscribiendo}
+                  <a
+                    href={wpLink(p.nombre)}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className={`w-full py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
                       p.id === 'basico'
-                        ? 'bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-60'
-                        : 'bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-60'
+                        ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                        : 'bg-violet-600 hover:bg-violet-500 text-white'
                     }`}
                   >
-                    {suscribiendo === p.id && <Loader2 size={13} className="animate-spin" />}
-                    {suscribiendo === p.id ? 'Redirigiendo…' : 'Suscribirse'}
-                  </button>
+                    <MessageCircle size={13} />
+                    Activar por WhatsApp
+                  </a>
                 )}
               </div>
             );
@@ -348,7 +366,7 @@ export default function PlanPage() {
       </div>
 
       <p className="text-xs text-zinc-600">
-        Para cambiar de plan o consultas escribinos a <span className="text-zinc-500">soporte@turnixia.com</span>
+        ¿Dudas? Escribinos a <span className="text-zinc-500">soporte@turnixia.com</span> o por WhatsApp al mismo número de soporte.
       </p>
     </div>
   );
